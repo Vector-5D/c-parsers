@@ -25,19 +25,88 @@ char* json_read_string(const char** text) {
     (*text)++; // skip first quote
 
     const char* start = *text;
-    while (**text != '"' && **text != '\0') {
-        (*text)++;
+    const char* scan_pos = start;
+
+    // loop for finding the terminating quote
+    while (*scan_pos) {
+        if (*scan_pos == '"') {
+            // get backslash count
+            size_t backslash_count = 0;
+            const char* previous = scan_pos - 1;
+            
+            while (previous >= start && *previous == '\\') {
+                backslash_count++;
+                previous--;
+            }
+
+            if (backslash_count % 2 == 0) {
+                // even number of backslashes means its not escaped
+                break;
+            }
+        }
+        scan_pos++;
     }
 
-    int length = *text - start;
+    if (*scan_pos != '"') return NULL; // string should end on another double-quote
+    
+    size_t length = (size_t)(scan_pos - start);
     char* result = (char*)malloc(length + 1);
     if (!result) return NULL;
 
-    strncpy(result, start, length);
-    result[length] = '\0';
+    const char* in = *text;
+    char* out = result;
 
-    if (**text == '"') (*text)++;
+    while (in < scan_pos) {
+        if (*in == '\\') {
+            in++;
+            if (in >= scan_pos) goto error;
+
+            switch (*in) {
+                case '"':
+                    *out++ = '"';
+                    break;
+                case '\\':
+                    *out++ = '\\';
+                    break;
+                case '/':
+                    *out++ = '/';
+                    break;
+                case 'b':
+                    *out++ = '\b';
+                    break;
+                case 'f':
+                    *out++ = '\f';
+                    break;
+                case 'n':
+                    *out++ = '\n';
+                    break;
+                case 'r':
+                    *out++ = '\r';
+                    break;
+                case 't':
+                    *out++ = '\t';
+                    break;
+                case 'u':
+                    // TO-DO: implement the unicode code point escape character \uXXXX
+                    goto error;
+                default: goto error;
+            }
+        } else {
+            // raw control characters are not allowed in JSON spec
+            // 0x20 is the ASCII threshold for control characters
+            if ((unsigned char)*in < 0x20) goto error;
+            *out++ = *in;
+        }
+        in++;
+    }
+    
+    *out = '\0';
+    *text = scan_pos + 1; // skip ending double-quote
     return result;
+    
+    error:
+        free(result);
+        return NULL;
 }
 
 double json_read_number(const char** text) {
