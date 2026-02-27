@@ -149,7 +149,10 @@ json_value_t* json_read_array(const char** text) {
                 sizeof(json_value_t*) * arr->array_value.capacity
             );
 
-            if (!new_items) goto error;
+            if (!new_items) {
+                json_free_value(value);
+                goto error;
+            }
 
             arr->array_value.items = new_items;
         }
@@ -198,7 +201,10 @@ json_value_t* json_read_object(const char** text) {
         if (**text == ':') (*text)++;
         json_skip_spaces(text);
         json_value_t* value = json_read_value(text);
-        if (!value) goto error;
+        if (!value) {
+            free(key);
+            goto error;
+        }
         
         if (obj->object_value.count == obj->object_value.capacity) {
             obj->object_value.capacity *= 2;
@@ -207,7 +213,11 @@ json_value_t* json_read_object(const char** text) {
                 sizeof(json_pair_t) * obj->object_value.capacity
             );
 
-            if (!new_pairs) goto error;
+            if (!new_pairs) {
+                free(key);
+                json_free_value(value);
+                goto error;
+            }
 
             obj->object_value.pairs = new_pairs;
         }
@@ -233,44 +243,47 @@ json_value_t* json_read_object(const char** text) {
 
 // returns NULL on error
 json_value_t* json_read_value(const char** text) {
-    json_value_t* val;
-    val = malloc(sizeof(json_value_t));
-    if (!val) return NULL;
-
     json_skip_spaces(text);
 
     if (**text == '"') {
+        json_value_t* val = malloc(sizeof(json_value_t));
+        if (!val) return NULL;
         val->type = TYPE_STRING;
         val->string_value = json_read_string(text);
-        if (!val->string_value) goto error_string;
+        if (!val->string_value) {
+            json_free_value(val);
+            return NULL;
+        }
         return val;
     } else if (isdigit(**text) || **text == '-') {
+        json_value_t* val = malloc(sizeof(json_value_t));
+        if (!val) return NULL;
         val->type = TYPE_NUMBER;
         val->number_value = json_read_number(text);
         return val;
     } else if (strncmp(*text, "true", 4) == 0 || strncmp(*text, "false", 5) == 0) {
+        json_value_t* val = malloc(sizeof(json_value_t));
+        if (!val) return NULL;
         val->type = TYPE_BOOL;
         val->bool_value = json_read_bool(text);
         return val;
     } else if (strncmp(*text, "null", 4) == 0) {
+        json_value_t* val = malloc(sizeof(json_value_t));
+        if (!val) return NULL;
         val->type = TYPE_NULL;
         *text += 4;
         return val;
     } else if (**text == '[') {
-        val = json_read_array(text);
+        json_value_t* val = json_read_array(text);
         if (!val) return NULL;
         return val;
     } else if (**text == '{') {
-        val = json_read_object(text);
+        json_value_t* val = json_read_object(text);
         if (!val) return NULL;
         return val;
     }
 
     return NULL;
-
-    error_string:
-        json_free_value(val);
-        return NULL;
 }
 
 // returns NULL on error
