@@ -24,6 +24,10 @@ int json_example() {
     printf("Looking for active:\n");
     json_value_t* active = json_get_value(root, "active");
     json_print_value(active);
+    
+    printf("Looking for numbers[3]:\n");
+    json_value_t* numbers = json_get_value(root, "numbers[3]");
+    json_print_value(numbers);
 
     // free root object including nested objects
     json_free_value(root);

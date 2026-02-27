@@ -7,6 +7,7 @@ typedef enum json_type {
     TYPE_NUMBER,
     TYPE_BOOL,
     TYPE_NULL,
+    TYPE_ARRAY,
     TYPE_OBJECT
 } json_type_t;
 
@@ -23,6 +24,11 @@ typedef struct json_value {
         char* string_value;
         double number_value;
         int bool_value;
+        struct {
+            struct json_value** items;
+            size_t count;
+            size_t capacity;
+        } array_value;
         struct {
             json_pair_t* pairs;
             size_t count;

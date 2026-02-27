@@ -12,13 +12,7 @@ void json_skip_spaces(const char** text) {
     }
 }
 
-// currently exits on first double-quote
-// this doesn't handle valid JSON like:
-// 1. escaped quotes ("John \"Doe\"")
-// 2. other escape sequences (\n, \t, \\, \uXXXX)
-// it has no overflow protection if the string is extremely large.
-// it also does not validate JSON spec
-
+// this function has no overflow protection for extremely large strings
 // returns NULL on error
 char* json_read_string(const char** text) {
     if (**text != '"') return NULL;
@@ -130,6 +124,58 @@ int json_read_bool(const char** text) {
 json_value_t* json_read_value(const char** text); // forward declaration
 void json_free_value(json_value_t* value); // forward declaration
 
+// returns NULL on error
+json_value_t* json_read_array(const char** text) {
+    json_value_t* arr = (json_value_t*)malloc(sizeof(json_value_t));
+    if (!arr) return NULL;
+
+    arr->type = TYPE_ARRAY;
+    arr->array_value.capacity = 8;
+    arr->array_value.count = 0;
+    arr->array_value.items = malloc(sizeof(json_value_t*) * arr->array_value.capacity);
+    if (!arr->array_value.items) goto error;
+
+    (*text)++; // skip '['
+    json_skip_spaces(text);
+    while (**text != ']' && **text != '\0') {
+        json_value_t* value = json_read_value(text);
+        if (!value) goto error;
+        json_skip_spaces(text);
+
+        if (arr->array_value.count == arr->array_value.capacity) {
+            arr->array_value.capacity *= 2;
+            json_value_t** new_items = realloc(
+                arr->array_value.items,
+                sizeof(json_value_t*) * arr->array_value.capacity
+            );
+
+            if (!new_items) goto error;
+
+            arr->array_value.items = new_items;
+        }
+
+        arr->array_value.items[arr->array_value.count] = value;
+        arr->array_value.count++;
+
+        if (**text == ',') {
+            (*text)++;
+        } else if (**text == ']') {
+            break;
+        } else {
+            goto error;
+        }
+
+        json_skip_spaces(text);
+    }
+
+    if (**text == ']') (*text)++; // skip ']'
+    return arr;
+
+    error:
+        json_free_value(arr);
+        return NULL;
+}
+
 // returns NULL on allocation failure
 json_value_t* json_read_object(const char** text) {
     json_value_t* obj = (json_value_t*)malloc(sizeof(json_value_t));
@@ -139,7 +185,6 @@ json_value_t* json_read_object(const char** text) {
     obj->object_value.capacity = 8;
     obj->object_value.count = 0;
     obj->object_value.pairs = malloc(sizeof(json_pair_t) * obj->object_value.capacity);
-
     if (!obj->object_value.pairs) goto error;
 
     (*text)++; // skip '{'
@@ -211,8 +256,13 @@ json_value_t* json_read_value(const char** text) {
         val->type = TYPE_NULL;
         *text += 4;
         return val;
+    } else if (**text == '[') {
+        val = json_read_array(text);
+        if (!val) return NULL;
+        return val;
     } else if (**text == '{') {
         val = json_read_object(text);
+        if (!val) return NULL;
         return val;
     }
 
@@ -274,6 +324,12 @@ void json_free_value(json_value_t* value) {
             break;
         case TYPE_NULL:
             break;
+        case TYPE_ARRAY:
+            for (size_t i = 0; i < value->array_value.count; ++i) {
+                json_free_value(value->array_value.items[i]);
+            }
+            free(value->array_value.items);
+            break;
         case TYPE_OBJECT:
             for (size_t i = 0; i < value->object_value.count; ++i) {
                 free(value->object_value.pairs[i].key);
@@ -287,31 +343,74 @@ void json_free_value(json_value_t* value) {
 }
 
 // returns NULL on error
+// example path arguments:
+// single key-value pair: "name"
+// key-value pair inside nested object: "details.age" 
+// indexing an array: array[3]
+// indexing a multidimensional array: matrix[10][20]
 json_value_t* json_get_value(json_value_t* root, const char* path) {
-    if (root == NULL || root->type != TYPE_OBJECT) return NULL;
-
+    if (!root || !path) return NULL;
+    
     char* path_copy = strdup(path);
+    if (!path_copy) return NULL;
+
     char* token = strtok(path_copy, ".");
     json_value_t* current = root;
 
-    while (token != NULL && current->type == TYPE_OBJECT) {
-        int found = 0;
-        for (size_t i = 0; i < current->object_value.count; i++) {
-            if (strcmp(current->object_value.pairs[i].key, token) == 0) {
-                current = current->object_value.pairs[i].value;
-                found = 1;
-                break;
+    while (token && current) {
+        char* bracket = strchr(token, '[');
+
+        if (bracket) {
+            *bracket = '\0'; // split key and index
+        }
+
+        // if there is a key
+        if (*token) {
+            if (current->type != TYPE_OBJECT) goto error;
+
+            int found = 0;
+            for (size_t i = 0; i < current->object_value.count; i++) {
+                if (strcmp(current->object_value.pairs[i].key, token) == 0) {
+                    current = current->object_value.pairs[i].value;
+                    found = 1;
+                    break;
+                }
             }
+
+            if (!found) goto error;
         }
-        if (!found) {
-            free(path_copy);
-            return NULL;
+
+        // handle array indexing if passed
+        while (bracket) {
+            if (current->type != TYPE_ARRAY) goto error;
+
+            char* end = strchr(bracket + 1, ']');
+            if (!end) goto error;
+
+            *end = '\0';
+
+            char* parse_end;
+            long index = strtol(bracket + 1, &parse_end, 10);
+
+            if (parse_end == bracket + 1) goto error;
+            if (*parse_end != '\0') goto error;
+
+            if (index < 0 || (size_t)index >= current->array_value.count) goto error;
+
+            current = current->array_value.items[index];
+
+            bracket = strchr(end + 1, '[');
         }
+
         token = strtok(NULL, ".");
     }
 
     free(path_copy);
     return current;
+
+    error:
+        free(path_copy);
+        return NULL;
 }
 
 void json_print_value(json_value_t* value) {
@@ -333,7 +432,10 @@ void json_print_value(json_value_t* value) {
         case TYPE_NULL:
             printf("Null\n");
             break;
-        default:
+        case TYPE_ARRAY:
+            printf("Array:\n");
+            break;
+        case TYPE_OBJECT:
             printf("Object {...}\n");
             break;
     }
