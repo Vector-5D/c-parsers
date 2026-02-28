@@ -162,16 +162,16 @@ json_value_t* json_read_array(const char** text) {
 
         if (**text == ',') {
             (*text)++;
-        } else if (**text == ']') {
-            break;
-        } else {
-            goto error;
+            json_skip_spaces(text);
         }
-
-        json_skip_spaces(text);
     }
 
-    if (**text == ']') (*text)++; // skip ']'
+    if (**text == ']') {
+        (*text)++;
+    } else {
+        goto error;
+    }
+    
     return arr;
 
     error:
@@ -193,12 +193,12 @@ json_value_t* json_read_object(const char** text) {
     (*text)++; // skip '{'
     json_skip_spaces(text);
     while (**text != '}' && **text != '\0') {
-        json_skip_spaces(text);
         char* key = json_read_string(text);
         if (!key) goto error;
         
         json_skip_spaces(text);
-        if (**text == ':') (*text)++;
+        if (**text != ':') goto error;
+        (*text)++;
         json_skip_spaces(text);
         json_value_t* value = json_read_value(text);
         if (!value) {
@@ -233,7 +233,12 @@ json_value_t* json_read_object(const char** text) {
         }
     }
 
-    if (**text == '}') (*text)++; // skip '}'
+    if (**text == '}') {
+        (*text)++;
+    } else {
+        goto error;
+    }
+    
     return obj;
 
     error:
